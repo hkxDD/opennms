@@ -13,13 +13,17 @@
 
     <cm:property-placeholder id="awsProperties" persistent-id="org.opennms.core.ipc.sink.sqs" update-strategy="reload" />
 
-    <reference id="configAdmin" interface="org.osgi.service.cm.ConfigurationAdmin" />
+	<reference id="configAdmin" interface="org.osgi.service.cm.ConfigurationAdmin" />
+	<bean id="awqSqsConfig" class="org.opennms.core.ipc.common.aws.sqs.AmazonSQSConfigBean">
+		<argument ref="configAdmin"/>
+	</bean>
 
-    <bean id="awsSqsManager" class="org.opennms.core.ipc.sink.aws.sqs.DefaultAmazonSQSManager" />
+	<bean id="awsSqsManager" class="org.opennms.core.ipc.common.aws.sqs.DefaultAmazonSQSManager">
+		<argument ref="awqSqsConfig"/>
+	</bean>
 
 	<bean id="awsRemoteMessageDispatcherFactory" class="org.opennms.core.ipc.sink.aws.sqs.AmazonSQSRemoteMessageDispatcherFactory"
 	  init-method="init" destroy-method="destroy">
-	  <property name="configAdmin" ref="configAdmin"/>
 	  <property name="awsSqsManager" ref="awsSqsManager"/>
 	</bean>
 

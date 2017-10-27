@@ -1,6 +1,7 @@
 # Minion Default Features
 pax-war
 opennms-core-ipc-sink-camel
+opennms-core-ipc-rpc-jms
 opennms-syslogd-listener-camel-netty
 opennms-trapd-listener
 minion-shell
