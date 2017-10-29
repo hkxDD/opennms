@@ -30,7 +30,6 @@ package org.opennms.netmgt.telemetry.adapters.jti;
 
 import com.google.common.collect.Iterables;
 import com.google.protobuf.ExtensionRegistry;
-import org.opennms.core.xml.OptionalIntegerAdapter;
 import org.opennms.netmgt.collection.api.CollectionAgent;
 import org.opennms.netmgt.collection.api.CollectionAgentFactory;
 import org.opennms.netmgt.collection.api.CollectionSet;

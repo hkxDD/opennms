@@ -31,6 +31,8 @@ package org.opennms.netmgt.telemetry.daemon;
 import org.opennms.core.ipc.sink.api.MessageConsumer;
 import org.opennms.core.ipc.sink.api.SinkModule;
 import org.opennms.core.logging.Logging;
+import org.opennms.features.telemetry.adapters.factory.api.AdapterFactory;
+import org.opennms.features.telemetry.adapters.registry.api.TelemetryAdapterRegistry;
 import org.opennms.netmgt.collection.api.ServiceParameters;
 import org.opennms.netmgt.telemetry.adapters.api.Adapter;
 import org.opennms.netmgt.telemetry.config.model.Protocol;
@@ -46,23 +48,32 @@ import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 
 import javax.annotation.PostConstruct;
+
+import java.lang.management.ManagementFactory;
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-public class TelemetryMessageConsumer implements MessageConsumer<TelemetryMessage, TelemetryProtos.TelemetryMessageLog> {
+public class TelemetryMessageConsumer
+        implements MessageConsumer<TelemetryMessage, TelemetryProtos.TelemetryMessageLog> {
     private final Logger LOG = LoggerFactory.getLogger(TelemetryMessageConsumer.class);
 
     private static final ServiceParameters EMPTY_SERVICE_PARAMETERS = new ServiceParameters(Collections.emptyMap());
+    
+    private static final int LOOKUP_DELAY_MS = 5*1000;
+    private static final int GRACE_PERIOD_MS = 3*60*1000;
 
     @Autowired
     private ApplicationContext applicationContext;
 
+    @Autowired
+    private TelemetryAdapterRegistry adapterRegistry;
+
     private final Protocol protocolDef;
     private final TelemetrySinkModule sinkModule;
-    private final List<Adapter> adapters;
+    private final List<Adapter> adapters;	
 
     public TelemetryMessageConsumer(Protocol protocol, TelemetrySinkModule sinkModule) throws Exception {
         this.protocolDef = Objects.requireNonNull(protocol);
@@ -84,7 +95,7 @@ public class TelemetryMessageConsumer implements MessageConsumer<TelemetryMessag
 
     @Override
     public void handleMessage(TelemetryProtos.TelemetryMessageLog messageLog) {
-        try(Logging.MDCCloseable mdc = Logging.withPrefixCloseable(Telemetryd.LOG_PREFIX)) {
+        try (Logging.MDCCloseable mdc = Logging.withPrefixCloseable(Telemetryd.LOG_PREFIX)) {
             LOG.trace("Received message log: {}", messageLog);
             // Handle the message with all of the adapters
             for (Adapter adapter : adapters) {
@@ -99,22 +110,46 @@ public class TelemetryMessageConsumer implements MessageConsumer<TelemetryMessag
     }
 
     private Adapter buildAdapter(org.opennms.netmgt.telemetry.config.model.Adapter adapterDef) throws Exception {
-        // Instantiate the associated class
-        final Object adapterInstance;
-        try {
-            final Class<?> clazz = Class.forName(adapterDef.getClassName());
-            final Constructor<?> ctor = clazz.getConstructor();
-            adapterInstance = ctor.newInstance();
-        } catch (Exception e) {
-            throw new RuntimeException(String.format("Failed to instantiate adapter with class name '%s'.",
-                    adapterDef.getClassName(), e));
-        }
 
-        // Cast
-        if (!(adapterInstance instanceof Adapter)) {
-            throw new IllegalArgumentException(String.format("%s must implement %s", adapterDef.getClassName(), Adapter.class.getCanonicalName()));
+		AdapterFactory adapterFactory = null;
+		while (ManagementFactory.getRuntimeMXBean().getUptime() < GRACE_PERIOD_MS) {
+			try {
+				Thread.sleep(LOOKUP_DELAY_MS);
+			} catch (InterruptedException e) {
+				LOG.error(
+						"Interrupted while waiting for adapter factory to become available in the service registry. Aborting.");
+				return null;
+			}
+			adapterFactory = adapterRegistry.getAdapterFactoryByClassName(adapterDef.getClassName());
+			if ( adapterFactory != null) {
+				break;
+			}
+		}
+		
+        final Adapter adapter;
+        if (adapterFactory != null) {
+            adapter = adapterFactory.createAdapter(adapterDef.getClassName());
+            LOG.error("Adapter created from factory");
+        } else {
+            LOG.error("Skipped creating adapter from OSGi");
+            // Instantiate the associated class
+            final Object adapterInstance;
+            try {
+                final Class<?> clazz = Class.forName(adapterDef.getClassName());
+                final Constructor<?> ctor = clazz.getConstructor();
+                adapterInstance = ctor.newInstance();
+            } catch (Exception e) {
+                throw new RuntimeException(String.format("Failed to instantiate adapter with class name '%s'.",
+                        adapterDef.getClassName(), e));
+            }
+
+            // Cast
+            if (!(adapterInstance instanceof Adapter)) {
+                throw new IllegalArgumentException(String.format("%s must implement %s", adapterDef.getClassName(),
+                        Adapter.class.getCanonicalName()));
+            }
+            adapter = (Adapter) adapterInstance;
         }
-        final Adapter adapter = (Adapter)adapterInstance;
 
         // Apply the parameters
         final BeanWrapper wrapper = PropertyAccessorFactory.forBeanPropertyAccess(adapter);
